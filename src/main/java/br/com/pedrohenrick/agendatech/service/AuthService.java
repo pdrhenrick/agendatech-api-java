@@ -1,62 +1,93 @@
 package br.com.pedrohenrick.agendatech.service;
 
-// Importa as classes que vamos usar
 import br.com.pedrohenrick.agendatech.dto.AuthRequestDTO;
+import br.com.pedrohenrick.agendatech.dto.LoginRequestDTO; // <-- NOVA IMPORTAÇÃO
 import br.com.pedrohenrick.agendatech.model.Usuario;
 import br.com.pedrohenrick.agendatech.repository.UsuarioRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+// =======================================================
+// ===== NOVAS IMPORTAÇÕES PARA O LOGIN =====
+// =======================================================
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+// =======================================================
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-@Service // Marca esta classe como um "Serviço" (onde fica a regra de negócio)
-         // O Spring vai gerenciá-la automaticamente.
+@Service 
 public class AuthService {
 
     // --- Injeção de Dependência ---
-    // Nós pedimos ao Spring para "injetar" (fornecer) as instâncias
-    // dos objetos que precisamos. Não precisamos dar "new" neles.
-
-    @Autowired // Pede ao Spring o 'UsuarioRepository' que criamos
+    
+    @Autowired 
     private UsuarioRepository usuarioRepository;
 
-    @Autowired // Pede ao Spring o 'PasswordEncoder' (BCrypt) que definimos no SecurityConfig
+    @Autowired 
     private PasswordEncoder passwordEncoder;
 
-    // --- Fim da Injeção ---
+    // =======================================================
+    // ===== NOVAS INJEÇÕES DE DEPENDÊNCIA =====
+    // =======================================================
+    @Autowired
+    private AuthenticationManager authenticationManager; // O Gerenciador do Spring Security
+
+    @Autowired
+    private TokenService tokenService; // Nosso serviço de criar "passaportes"
+    // =======================================================
 
 
     /**
-     * Este é o método principal que o Controller (próximo passo) vai chamar.
-     * Ele recebe o DTO (formulário) e retorna o novo Usuário salvo.
+     * Método 1: REGISTRO DE USUÁRIO (Já tínhamos)
      */
     public Usuario register(AuthRequestDTO authRequestDTO) {
         
-        // 1. Verificar se o email já existe no banco
-        // Usamos o método 'existsByEmail' que criamos no Repository
         if (usuarioRepository.existsByEmail(authRequestDTO.getEmail())) {
-            
-            // 2. Se o email já existir, nós lançamos uma exceção.
-            // Isso vai parar a execução e enviar um erro para o Controller.
             throw new RuntimeException("Erro: Email já cadastrado!");
         }
 
-        // 3. Se o email estiver livre, criamos um novo objeto 'Usuario' (o do 'model')
         Usuario novoUsuario = new Usuario();
-
-        // 4. Preenchemos os dados do novo usuário com base nos dados do DTO
         novoUsuario.setNome(authRequestDTO.getNome());
         novoUsuario.setEmail(authRequestDTO.getEmail());
-        novoUsuario.setRole(authRequestDTO.getRole()); // CLIENTE ou PROFISSIONAL
+        novoUsuario.setRole(authRequestDTO.getRole());
 
-        // 5. O PASSO MAIS IMPORTANTE: Criptografar a senha
-        // Nós NUNCA salvamos a senha pura (authRequestDTO.getSenha())
-        // Nós usamos o 'passwordEncoder' para gerar um "hash" seguro.
         String senhaCriptografada = passwordEncoder.encode(authRequestDTO.getSenha());
         novoUsuario.setSenha(senhaCriptografada);
 
-        // 6. Salvar o novo usuário no banco de dados
-        // Usamos o método 'save()' (que já vem no JpaRepository)
-        // e retornamos o usuário que foi salvo (ele já vem com o ID).
         return usuarioRepository.save(novoUsuario);
+    }
+
+
+    // =======================================================
+    // ===== NOVO MÉTODO DE LOGIN ADICIONADO =====
+    // =======================================================
+    /**
+     * Método 2: LOGIN DE USUÁRIO
+     * Recebe o "formulário" de login (email e senha pura)
+     * Retorna o Token (passaporte) se o login for válido.
+     */
+    public String login(LoginRequestDTO loginRequestDTO) {
+        
+        // 1. Cria um "pacote" de autenticação com o email e a senha pura
+        // O Spring usa isso para comparar com o que está no banco.
+        var usernamePassword = new UsernamePasswordAuthenticationToken(
+                loginRequestDTO.getEmail(),
+                loginRequestDTO.getSenha()
+        );
+
+        // 2. Tenta autenticar
+        // O 'authenticationManager' vai:
+        //    a) Buscar o usuário no banco pelo email (através de um serviço interno do Spring)
+        //    b) Pegar a senha criptografada do banco
+        //    c) Comparar a senha criptografada com a senha pura (loginRequestDTO.getSenha())
+        //    d) Se as senhas baterem, ele retorna um objeto 'Authentication'
+        //    e) Se não baterem, ele lança uma exceção (que o Controller vai pegar)
+        Authentication auth = this.authenticationManager.authenticate(usernamePassword);
+
+        // 3. Se a autenticação deu certo (passou da linha acima), pegamos o usuário
+        Usuario usuarioAutenticado = (Usuario) auth.getPrincipal();
+
+        // 4. Geramos o "passaporte" (Token JWT) para esse usuário
+        return tokenService.generateToken(usuarioAutenticado);
     }
 }
